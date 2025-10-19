@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chi-Square Uniformity Test ✨</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: "Poppins", sans-serif;
+      background: linear-gradient(135deg, #e0f7fa, #fce4ec, #e8eaf6);
+      background-size: 300% 300%;
+      animation: bgShift 15s ease infinite;
+    }
+    @keyframes bgShift {
+      0% {background-position: 0% 50%;}
+      50% {background-position: 100% 50%;}
+      100% {background-position: 0% 50%;}
+    }
+    .card {
+      border-radius: 1rem;
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+      transform: translateY(-3px);
+    }
+    .mono { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+
+<body class="min-h-screen text-gray-900">
+  <header class="text-center py-8">
+    <h1 class="text-4xl font-bold bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 text-transparent bg-clip-text">
+      🎓 Chi-Square Test Calculator
+    </h1>
+    <p class="text-gray-600 mt-2 font-medium">
+      Step-by-step uniformity analysis made beautiful ✨
+    </p>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-4 space-y-8">
+
+    <!-- Inputs -->
+    <section class="card p-6 space-y-4">
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-semibold mb-1">Raw numbers (0–1), any separators:</label>
+          <textarea id="raw" rows="6"
+            placeholder="0.63 0.28 0.30 0.42 ..."
+            class="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-400 focus:outline-none"></textarea>
+          <p class="text-xs text-gray-500 mt-1">If you fill this, the app will auto-bin and compute Oᵢ and Eᵢ.</p>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-semibold">Observed Oᵢ:</label>
+            <textarea id="observed" rows="2" placeholder="8,11,9,7,6,14,10,10,12,13"
+              class="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-400 focus:outline-none"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm font-semibold">Expected Eᵢ:</label>
+            <textarea id="expected" rows="2" placeholder="10,10,10,10,10,10,10,10,10,10"
+              class="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-400 focus:outline-none"></textarea>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <label class="block">
+              <span class="text-sm"># Classes (n)</span>
+              <input id="nBins" type="number" min="2" value="10"
+                class="mt-1 w-full border border-gray-300 rounded-lg p-2 text-center focus:ring-2 focus:ring-indigo-400 focus:outline-none">
+            </label>
+            <label class="block">
+              <span class="text-sm">Significance α</span>
+              <input id="alpha" type="number" step="0.001" value="0.05"
+                class="mt-1 w-full border border-gray-300 rounded-lg p-2 text-center focus:ring-2 focus:ring-indigo-400 focus:outline-none">
+            </label>
+            <div class="flex items-end">
+              <button id="compute"
+                class="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white font-semibold rounded-xl px-6 py-3 shadow-md hover:shadow-xl hover:opacity-90 transition-all duration-300">
+                🚀 Calculate
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section class="card text-center p-6">
+      <h2 class="text-lg font-semibold text-indigo-700 mb-3">Results</h2>
+      <div id="summary" class="text-xl font-medium transition-opacity duration-700"></div>
+    </section>
+
+    <!-- Steps -->
+    <section class="card p-6">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold text-gray-700">Step-by-Step Explanation</h2>
+        <div class="space-x-2">
+          <button id="copySteps"
+            class="border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-100 transition">
+            📋 Copy Steps
+          </button>
+          <button id="downloadCSV"
+            class="border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-100 transition">
+            ⬇️ Download CSV
+          </button>
+        </div>
+      </div>
+      <ol id="steps" class="list-decimal pl-6 mt-3 space-y-1 text-sm text-gray-700"></ol>
+    </section>
+
+    <!-- Table -->
+    <section class="card p-6 overflow-x-auto">
+      <h2 class="font-semibold mb-3 text-gray-700">Working Table</h2>
+      <table class="w-full text-sm border">
+        <thead class="bg-gray-100 font-semibold">
+          <tr>
+            <th class="p-2 border">Class #</th>
+            <th class="p-2 border">Upper Limit</th>
+            <th class="p-2 border">Observed Oᵢ</th>
+            <th class="p-2 border">Expected Eᵢ</th>
+            <th class="p-2 border">Oᵢ − Eᵢ</th>
+            <th class="p-2 border">(Oᵢ − Eᵢ)²</th>
+            <th class="p-2 border">(Oᵢ − Eᵢ)² / Eᵢ</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+        <tfoot class="bg-gray-50 font-medium">
+          <tr>
+            <td class="p-2 border">Totals</td>
+            <td class="p-2 border"></td>
+            <td class="p-2 border mono" id="totO">0</td>
+            <td class="p-2 border mono" id="totE">0</td>
+            <td class="p-2 border"></td>
+            <td class="p-2 border"></td>
+            <td class="p-2 border mono" id="totChi">0.000000</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+
+    <!-- Charts -->
+    <section class="grid md:grid-cols-2 gap-6">
+      <div class="card p-6">
+        <h3 class="font-semibold mb-2 text-gray-700">Observed vs Expected</h3>
+        <canvas id="chartOE" height="200"></canvas>
+      </div>
+      <div class="card p-6">
+        <h3 class="font-semibold mb-2 text-gray-700">Per-bin χ² Contribution</h3>
+        <canvas id="chartC" height="200"></canvas>
+      </div>
+    </section>
+  </main>
+
+<script>
+let chartOE, chartC, lastData=null;
+
+function splitNums(s){
+  if(!s) return [];
+  return s.replace(/[\n\r\t;]+/g, " ")
+          .split(/[,\s]+/)
+          .map(Number)
+          .filter(x=>!Number.isNaN(x));
+}
+
+async function compute(){
+  const raw = document.getElementById('raw').value.trim();
+  const observed = splitNums(document.getElementById('observed').value);
+  const expected = splitNums(document.getElementById('expected').value);
+  const nBins = parseInt(document.getElementById('nBins').value || '10', 10);
+  const alpha = parseFloat(document.getElementById('alpha').value || '0.05');
+
+  const payload = { alpha, nBins };
+  if(raw.length && !observed.length) { payload.rawNumbers = raw; }
+  else if(observed.length && expected.length) { payload.observed = observed; payload.expected = expected; }
+  else { alert("Provide raw numbers OR observed + expected."); return; }
+
+  const res = await fetch('/calculate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(data.error){ alert(data.error); return; }
+  lastData = data;
+  render(data);
+}
+
+function render(d){
+  const summary = document.getElementById('summary');
+  const decisionClass = d.decision.startsWith('Reject') ? 'text-rose-600' : 'text-green-600';
+  summary.innerHTML = `
+    <div class="space-y-2 mono">
+      <div>χ² = <b>${d.chi2.toFixed(6)}</b></div>
+      <div>df = ${d.df}</div>
+      <div>Critical value = ${d.critical.toFixed(6)}</div>
+      <div>p-value = ${d.p_value.toFixed(6)}</div>
+      <div class="mt-3 p-3 rounded-xl bg-gradient-to-r from-green-100 via-white to-green-100 shadow-inner">
+        <span class="font-semibold">Decision:</span> 
+        <span class="${decisionClass} font-bold">${d.decision}</span>
+      </div>
+    </div>`;
+  summary.style.opacity = 0;
+  setTimeout(()=> summary.style.opacity = 1, 100);
+
+  const steps = document.getElementById('steps');
+  steps.innerHTML = '';
+  d.steps.forEach(s=>{
+    const li = document.createElement('li');
+    li.textContent = s;
+    steps.appendChild(li);
+  });
+
+  const tb=document.getElementById('tbody');
+  tb.innerHTML='';
+  let sumO=0,sumE=0,sumC=0;
+  d.table.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td class="p-2 border text-center">${r.bin}</td>
+      <td class="p-2 border text-center">${r.upper}</td>
+      <td class="p-2 border text-right mono">${r.observed}</td>
+      <td class="p-2 border text-right mono">${(+r.expected).toFixed(4)}</td>
+      <td class="p-2 border text-right mono">${(+r.O_minus_E).toFixed(4)}</td>
+      <td class="p-2 border text-right mono">${(+r["(O_minus_E)^2"]).toFixed(4)}</td>
+      <td class="p-2 border text-right mono">${(+r.contribution).toFixed(6)}</td>`;
+    tb.appendChild(tr);
+    sumO+=+r.observed; sumE+=+r.expected; sumC+=+r.contribution;
+  });
+  document.getElementById('totO').textContent=sumO;
+  document.getElementById('totE').textContent=sumE.toFixed(4);
+  document.getElementById('totChi').textContent=sumC.toFixed(6);
+
+  const labels = d.observed.map((_,i)=>`Class ${i+1}`);
+  if(chartOE) chartOE.destroy();
+  if(chartC) chartC.destroy();
+
+  chartOE = new Chart(document.getElementById('chartOE'), {
+    type:'bar',
+    data:{ labels, datasets:[
+      {
+        label:'Observed',
+        data:d.observed,
+        backgroundColor:(ctx)=>{
+          const g=ctx.chart.ctx.createLinearGradient(0,0,0,200);
+          g.addColorStop(0,'#6366f1'); g.addColorStop(1,'#a5b4fc'); return g;
+        },
+        borderRadius:8
+      },
+      {
+        label:'Expected',
+        data:d.expected,
+        backgroundColor:(ctx)=>{
+          const g=ctx.chart.ctx.createLinearGradient(0,0,0,200);
+          g.addColorStop(0,'#ec4899'); g.addColorStop(1,'#f9a8d4'); return g;
+        },
+        borderRadius:8
+      }
+    ]},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      animation:{duration:1500,easing:'easeOutElastic'},
+      plugins:{legend:{position:'bottom'}}
+    }
+  });
+
+  chartC = new Chart(document.getElementById('chartC'), {
+    type:'bar',
+    data:{ labels, datasets:[{
+      label:'(O−E)²/E',
+      data:d.contribution,
+      backgroundColor:(ctx)=>{
+        const g=ctx.chart.ctx.createLinearGradient(0,0,0,200);
+        g.addColorStop(0,'#10b981'); g.addColorStop(1,'#6ee7b7'); return g;
+      },
+      borderRadius:8
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:1500,easing:'easeOutElastic'},plugins:{legend:{position:'bottom'}}}
+  });
+}
+
+document.getElementById('compute').addEventListener('click', compute);
+
+document.getElementById('copySteps').addEventListener('click', ()=>{
+  if(!lastData)return;
+  navigator.clipboard.writeText(lastData.steps.join('\n'));
+  alert('✅ Steps copied!');
+});
+
+document.getElementById('downloadCSV').addEventListener('click', ()=>{
+  if(!lastData)return;
+  const rows=[
+    ['Class','Upper','Observed','Expected','O-E','(O-E)^2','(O-E)^2/E'],
+    ...lastData.table.map(r=>[r.bin,r.upper,r.observed,r.expected,r.O_minus_E,r["(O_minus_E)^2"],r.contribution]),
+    ['Totals','',lastData.N,lastData.expected.reduce((a,b)=>a+b,0),'','',lastData.contribution.reduce((a,b)=>a+b,0)]
+  ];
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='chi_square_working.csv'; a.click();
+});
+</script>
+</body>
+</html>
