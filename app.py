@@ -1,153 +1,219 @@
-import os
-from math import floor
 from flask import Flask, request, jsonify, render_template
-import scipy.stats as stats
+from flask_cors import CORS
+import numpy as np
+import pandas as pd
+from scipy import stats
+import json
+import os
 
-BASE_DIR = os.path.dirname(__file__)
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
+app = Flask(__name__)
+CORS(app)
 
-# ---------- helpers ----------
-def parse_numbers(s: str):
-    """Parse comma/space/newline separated numbers into floats."""
-    if not s or not str(s).strip():
-        return []
-    txt = str(s).replace("\n", " ").replace("\r", " ").replace("\t", " ").replace(";", " ")
-    parts = []
-    for chunk in txt.split(","):
-        parts.extend(chunk.strip().split())
-    out = []
-    for p in parts:
-        try:
-            out.append(float(p))
-        except:
-            pass
-    return out
+class ChiSquareUniformityTest:
+    def __init__(self, n_numbers=100, n_intervals=10, alpha=0.05, random_seed=42):
+        self.n_numbers = n_numbers
+        self.n_intervals = n_intervals
+        self.alpha = alpha
+        self.random_seed = random_seed
+        self.df = n_intervals - 1
+        self.critical_value = stats.chi2.ppf(1 - alpha, self.df)
+        
+    def generate_random_numbers(self):
+        """Generate uniform random numbers between 0 and 1"""
+        np.random.seed(self.random_seed)
+        self.random_numbers = np.random.uniform(0, 1, self.n_numbers)
+        return self.random_numbers.tolist()
+    
+    def calculate_frequencies(self):
+        """Calculate observed and expected frequencies"""
+        self.interval_edges = np.linspace(0, 1, self.n_intervals + 1)
+        self.observed, _ = np.histogram(self.random_numbers, bins=self.interval_edges)
+        self.expected = np.full(self.n_intervals, self.n_numbers / self.n_intervals)
+        return self.observed.tolist(), self.expected.tolist()
+    
+    def perform_chi_square_test(self):
+        """Perform the complete chi-square test"""
+        # Generate numbers and calculate frequencies
+        random_nums = self.generate_random_numbers()
+        observed, expected = self.calculate_frequencies()
+        
+        # Calculate components and test statistic
+        results = []
+        chi_square_components = []
+        chi_square_statistic = 0
+        
+        for i in range(self.n_intervals):
+            O_i = observed[i]
+            E_i = expected[i]
+            O_minus_E = O_i - E_i
+            O_minus_E_squared = (O_minus_E) ** 2
+            chi_component = O_minus_E_squared / E_i
+            chi_square_statistic += chi_component
+            
+            results.append({
+                'interval': i + 1,
+                'range': f"{(i/self.n_intervals):.1f}-{((i+1)/self.n_intervals):.1f}",
+                'observed': O_i,
+                'expected': round(E_i, 1),
+                'O_minus_E': round(O_minus_E, 1),
+                'O_minus_E_squared': round(O_minus_E_squared, 2),
+                'chi_component': round(chi_component, 4)
+            })
+        
+        # Calculate p-value and make decision
+        p_value = 1 - stats.chi2.cdf(chi_square_statistic, self.df)
+        
+        decision = "REJECT" if chi_square_statistic > self.critical_value else "FAIL TO REJECT"
+        conclusion = "Numbers are NOT uniformly distributed" if decision == "REJECT" else "Numbers appear to be uniformly distributed"
+        
+        return {
+            'test_parameters': {
+                'n_numbers': self.n_numbers,
+                'n_intervals': self.n_intervals,
+                'alpha': self.alpha,
+                'random_seed': self.random_seed,
+                'df': self.df
+            },
+            'sample_statistics': {
+                'sample_mean': round(np.mean(self.random_numbers), 4),
+                'sample_variance': round(np.var(self.random_numbers), 4),
+                'first_10_numbers': [round(x, 3) for x in self.random_numbers[:10]]
+            },
+            'test_results': {
+                'chi_square': round(chi_square_statistic, 4),
+                'critical_value': round(self.critical_value, 4),
+                'p_value': round(p_value, 4),
+                'decision': decision,
+                'conclusion': conclusion
+            },
+            'frequency_table': results,
+            'chart_data': {
+                'intervals': [f"{(i/self.n_intervals):.1f}-{((i+1)/self.n_intervals):.1f}" for i in range(self.n_intervals)],
+                'observed': observed,
+                'expected': expected,
+                'components': [round(((o-e)**2/e), 4) for o,e in zip(observed, expected)]
+            }
+        }
 
-def bin_counts(values, n_bins):
-    """
-    Count values into n equal-width bins on [0,1].
-    Bin index = floor(x * n_bins); clamp last bin for x=1.0.
-    """
-    cnt = [0] * n_bins
-    for x in values:
-        if x < 0 or x > 1:
-            # skip out-of-range
-            continue
-        idx = min(n_bins - 1, floor(x * n_bins))
-        cnt[idx] += 1
-    return cnt
-
-# ---------- routes ----------
-@app.route("/")
+@app.route('/')
 def index():
-    return render_template("index.html")
+    return render_template('index.html')
 
-@app.route("/calculate", methods=["POST"])
-def calculate():
-    data = request.get_json() or {}
-
-    alpha = float(data.get("alpha", 0.05))
-    n_bins = int(data.get("nBins", 10))
-
-    raw_numbers_txt = data.get("rawNumbers", "").strip()
-    observed = data.get("observed", [])
-    expected = data.get("expected", [])
-
-    steps = []
-    table_rows = []
-
-    # Mode A: raw numbers → auto-binning
-    if raw_numbers_txt and not observed:
-        values = parse_numbers(raw_numbers_txt)
-        N = len(values)
-        steps.append(f"Step 1: Read N = {N} numbers from input.")
-        steps.append(f"Step 2: Choose number of classes (n) = {n_bins}.")
-        # equal-width bins
-        edges_desc = []
-        for i in range(n_bins):
-            left = i / n_bins
-            right = (i + 1) / n_bins
-            if i == 0:
-                edges_desc.append(f"[{left:.1f}, {right:.1f}]")
-            else:
-                edges_desc.append(f"({left:.1f}, {right:.1f}]")
-        steps.append("Step 3: Create equal-width bins on [0,1]: " + ", ".join(edges_desc))
-
-        O = bin_counts(values, n_bins)
-        steps.append(f"Step 4: Count observations per bin → Observed Oᵢ = {O}.")
-
-        Ei = N / n_bins if n_bins > 0 else 0.0
-        E = [Ei] * n_bins
-        steps.append(f"Step 5: Expected for uniform distribution: Eᵢ = N/n = {N}/{n_bins} = {Ei:.4f} (same for all bins).")
-
-    # Mode B: explicit observed & expected
-    else:
-        if len(observed) != len(expected):
-            return jsonify({"error": "Observed and Expected must be the same length."}), 400
-        O = [float(x) for x in observed]
-        E = [float(x) for x in expected]
-        n_bins = len(O)
-        N = int(sum(O))
-        steps.append(f"Step 1: Use provided Observed (Oᵢ) & Expected (Eᵢ) with n = {n_bins}.")
-        steps.append(f"Oᵢ = {O}")
-        steps.append(f"Eᵢ = {E}")
-        steps.append(f"Step 2: Total N = ΣOᵢ = {N}")
-
-    # Per-bin details (exactly n_bins rows)
-    contrib, diff, sq = [], [], []
-    for i in range(n_bins):
-        oi, ei = O[i], E[i]
-        di = oi - ei
-        qi = di * di
-        ci = (qi / ei) if ei > 0 else 0.0
-
-        diff.append(di)
-        sq.append(qi)
-        contrib.append(ci)
-
-        table_rows.append({
-            "bin": i + 1,
-            "upper": f"{(i + 1) / n_bins:.3f}",
-            "observed": oi,
-            "expected": ei,
-            "O_minus_E": di,
-            "(O_minus_E)^2": qi,
-            "contribution": ci
+@app.route('/api/chi-square-test', methods=['POST'])
+def chi_square_test():
+    try:
+        data = request.get_json()
+        
+        # Get parameters from request
+        n_numbers = data.get('n_numbers', 100)
+        n_intervals = data.get('n_intervals', 10)
+        alpha = data.get('alpha', 0.05)
+        random_seed = data.get('random_seed', 42)
+        
+        # Validate inputs
+        if n_numbers <= 0 or n_intervals <= 0:
+            return jsonify({'error': 'Sample size and intervals must be positive'}), 400
+        
+        # Perform chi-square test
+        test = ChiSquareUniformityTest(n_numbers, n_intervals, alpha, random_seed)
+        results = test.perform_chi_square_test()
+        
+        return jsonify({
+            'success': True,
+            'data': results
         })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
-    steps.append("Step 3: Compute per-bin: (Oᵢ−Eᵢ), (Oᵢ−Eᵢ)², and contribution (Oᵢ−Eᵢ)²/Eᵢ.")
-    chi2_stat = sum(contrib)
-    df = max(n_bins - 1, 1)                   # ✅ df = n − 1
-    critical = stats.chi2.ppf(1 - alpha, df)
-    p_value = 1 - stats.chi2.cdf(chi2_stat, df)
-    decision = "Reject H₀ (Not Uniform)" if chi2_stat >= critical else "Fail to Reject H₀ (Uniform)"
+@app.route('/api/multiple-alpha-test', methods=['POST'])
+def multiple_alpha_test():
+    try:
+        data = request.get_json()
+        
+        n_numbers = data.get('n_numbers', 100)
+        n_intervals = data.get('n_intervals', 10)
+        random_seed = data.get('random_seed', 42)
+        
+        alpha_values = [0.01, 0.05, 0.10]
+        results = []
+        
+        for alpha in alpha_values:
+            test = ChiSquareUniformityTest(n_numbers, n_intervals, alpha, random_seed)
+            test_result = test.perform_chi_square_test()
+            
+            results.append({
+                'alpha': alpha,
+                'test_statistic': test_result['test_results']['chi_square'],
+                'critical_value': test_result['test_results']['critical_value'],
+                'p_value': test_result['test_results']['p_value'],
+                'decision': test_result['test_results']['decision']
+            })
+        
+        return jsonify({
+            'success': True,
+            'data': results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
-    steps.append(f"Step 4: χ² = Σ (Oᵢ−Eᵢ)²/Eᵢ = {chi2_stat:.6f}")
-    steps.append(f"Step 5: Degrees of freedom df = n − 1 = {n_bins} − 1 = {df}")
-    steps.append(f"Step 6: Critical value χ²(1−α, df) with α = {alpha} → {critical:.6f}")
-    steps.append(f"Step 7: p-value = 1 − F_χ²(χ²; df) = {p_value:.6f}")
-    steps.append(f"Decision: {decision}")
+@app.route('/api/export-results', methods=['POST'])
+def export_results():
+    try:
+        data = request.get_json()
+        
+        # Create a DataFrame for export
+        df_data = []
+        for row in data['frequency_table']:
+            df_data.append({
+                'Interval': row['interval'],
+                'Range': row['range'],
+                'Observed': row['observed'],
+                'Expected': row['expected'],
+                'O-E': row['O_minus_E'],
+                '(O-E)²': row['O_minus_E_squared'],
+                '(O-E)²/E': row['chi_component']
+            })
+        
+        df = pd.DataFrame(df_data)
+        
+        # Add summary row
+        summary_row = {
+            'Interval': 'Total',
+            'Range': '-',
+            'Observed': sum([row['observed'] for row in data['frequency_table']]),
+            'Expected': sum([row['expected'] for row in data['frequency_table']]),
+            'O-E': '-',
+            '(O-E)²': '-',
+            '(O-E)²/E': data['test_results']['chi_square']
+        }
+        
+        df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+        
+        return jsonify({
+            'success': True,
+            'csv_data': df.to_csv(index=False),
+            'summary': {
+                'test_statistic': data['test_results']['chi_square'],
+                'critical_value': data['test_results']['critical_value'],
+                'decision': data['test_results']['decision']
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
-    return jsonify({
-        "mode": "raw" if raw_numbers_txt and not observed else "explicit",
-        "n": n_bins,
-        "N": int(sum(O)),
-        "alpha": alpha,
-        "observed": O,
-        "expected": E,
-        "diff": diff,
-        "squared": sq,
-        "contribution": contrib,
-        "chi2": chi2_stat,
-        "df": df,
-        "critical": critical,
-        "p_value": p_value,
-        "decision": decision,
-        "steps": steps,
-        "table": table_rows
-    })
-
-if __name__ == "__main__":
-    app.run(debug=True)
-
-
+if __name__ == '__main__':
+    # Create templates directory if it doesn't exist
+    os.makedirs('templates', exist_ok=True)
+    app.run(debug=True, port=5000)
